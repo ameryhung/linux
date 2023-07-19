@@ -220,6 +220,8 @@ void vsock_for_each_connected_socket(struct vsock_transport *transport,
 int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk);
 bool vsock_find_cid(unsigned int cid);
 void vsock_dgram_skb_save_src_addr(struct sk_buff *skb, u32 cid, u32 port);
+const struct vsock_transport *vsock_dgram_lookup_transport(unsigned int cid,
+							   u8 flags);
 
 /**** TAP ****/
 
