@@ -186,6 +186,26 @@ EXPORT_SYMBOL_GPL(vsock_connected_table);
 DEFINE_SPINLOCK(vsock_table_lock);
 EXPORT_SYMBOL_GPL(vsock_table_lock);
 
+/* Multi-transport datagram uses cb to pass source address to vsock layer. */
+struct vsock_skb_cb {
+	u32 src_cid;
+	u32 src_port;
+};
+
+static inline struct vsock_skb_cb *vsock_skb_cb(struct sk_buff *skb)
+{
+	return (struct vsock_skb_cb *)skb->cb;
+};
+
+void vsock_dgram_skb_save_src_addr(struct sk_buff *skb, u32 cid, u32 port)
+{
+	struct vsock_skb_cb *vsock_cb = vsock_skb_cb(skb);
+
+	vsock_cb->src_cid = cid;
+	vsock_cb->src_port = port;
+}
+EXPORT_SYMBOL_GPL(vsock_dgram_skb_save_src_addr);
+
 /* Autobind this socket to the local address if necessary. */
 static int vsock_auto_bind(struct vsock_sock *vsk)
 {
@@ -1295,8 +1315,48 @@ int __vsock_dgram_recvmsg(struct socket *sock, struct msghdr *msg,
 {
 	struct sock *sk = sock->sk;
 	struct vsock_sock *vsk = vsock_sk(sk);
+	struct sk_buff *skb;
+	size_t payload_len;
+	int err;
 
-	return vsk->transport->dgram_dequeue(vsk, msg, len, flags);
+	if (flags & MSG_OOB || flags & MSG_ERRQUEUE)
+		return -EOPNOTSUPP;
+
+	if (unlikely(flags & MSG_ERRQUEUE))
+		return sock_recv_errqueue(sk, msg, len, SOL_VSOCK, 0);
+
+	/* Retrieve the head sk_buff from the socket's receive queue. */
+	err = 0;
+	skb = skb_recv_datagram(sk_vsock(vsk), flags, &err);
+	if (!skb)
+		return err;
+
+	payload_len = skb->len;
+
+	if (payload_len > len) {
+		payload_len = len;
+		msg->msg_flags |= MSG_TRUNC;
+	}
+
+	/* Place the datagram payload in the user's iovec. */
+	err = skb_copy_datagram_msg(skb, 0, msg, payload_len);
+	if (err)
+		goto out;
+
+	if (msg->msg_name) {
+		/* Provide the address of the sender. */
+		DECLARE_SOCKADDR(struct sockaddr_vm *, vm_addr, msg->msg_name);
+		struct vsock_skb_cb *vsock_cb;
+
+		vsock_cb = vsock_skb_cb(skb);
+		vsock_addr_init(vm_addr, vsock_cb->src_cid, vsock_cb->src_port);
+		msg->msg_namelen = sizeof(*vm_addr);
+	}
+	err = payload_len;
+
+out:
+	skb_free_datagram(&vsk->sk, skb);
+	return err;
 }
 
 int vsock_dgram_recvmsg(struct socket *sock, struct msghdr *msg,
