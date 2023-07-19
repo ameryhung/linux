@@ -1482,7 +1482,7 @@ int __vsock_dgram_recvmsg(struct socket *sock, struct msghdr *msg,
 	size_t payload_len;
 	int err;
 
-	if (flags & MSG_OOB || flags & MSG_ERRQUEUE)
+	if (unlikely(flags & MSG_OOB))
 		return -EOPNOTSUPP;
 
 	if (unlikely(flags & MSG_ERRQUEUE))
