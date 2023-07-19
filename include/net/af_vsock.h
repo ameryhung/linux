@@ -222,6 +222,7 @@ bool vsock_find_cid(unsigned int cid);
 void vsock_dgram_skb_save_src_addr(struct sk_buff *skb, u32 cid, u32 port);
 const struct vsock_transport *vsock_dgram_lookup_transport(unsigned int cid,
 							   u8 flags);
+struct sock *vsock_find_bound_dgram_socket(struct sockaddr_vm *addr);
 
 /**** TAP ****/
 
