@@ -533,6 +533,17 @@ static void bpf_struct_ops_map_put_progs(struct bpf_struct_ops_map *st_map)
 	}
 }
 
+static void bpf_struct_ops_map_clear_this_ptr(struct bpf_struct_ops_map *st_map)
+{
+	u32 i;
+
+	for (i = 0; i < st_map->funcs_cnt; i++) {
+		if (!st_map->links[i])
+			break;
+		RCU_INIT_POINTER(st_map->links[i]->prog->aux->this_st_ops, NULL);
+	}
+}
+
 static void bpf_struct_ops_map_free_image(struct bpf_struct_ops_map *st_map)
 {
 	int i;
@@ -695,6 +706,9 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 	if (flags)
 		return -EINVAL;
 
+	if (st_ops->flags & ~BPF_STRUCT_OPS_FLAG_MASK)
+		return -EINVAL;
+
 	if (*(u32 *)key != 0)
 		return -E2BIG;
 
@@ -801,6 +815,19 @@ static long bpf_struct_ops_map_update_elem(struct bpf_map *map, void *key,
 			goto reset_unlock;
 		}
 
+		if (st_ops->flags & BPF_STRUCT_OPS_F_THIS_PTR) {
+			/* Make sure a struct_ops map will not have programs with
+			 * different this_st_ops. Once a program is associated with
+			 * a struct_ops map, it cannot be used in another struct_ops
+			 * map also with BPF_STRUCT_OPS_F_THIS_PTR
+			 */
+			if (cmpxchg(&prog->aux->this_st_ops, NULL, kdata)) {
+				bpf_prog_put(prog);
+				err = -EINVAL;
+				goto reset_unlock;
+			}
+		}
+
 		link = kzalloc(sizeof(*link), GFP_USER);
 		if (!link) {
 			bpf_prog_put(prog);
@@ -894,6 +921,7 @@ reset_unlock:
 	bpf_struct_ops_map_free_ksyms(st_map);
 	bpf_struct_ops_map_free_image(st_map);
 	bpf_struct_ops_map_put_progs(st_map);
+	bpf_struct_ops_map_clear_this_ptr(st_map);
 	memset(uvalue, 0, map->value_size);
 	memset(kvalue, 0, map->value_size);
 unlock:
@@ -972,6 +1000,13 @@ static void __bpf_struct_ops_map_free(struct bpf_map *map)
 static void bpf_struct_ops_map_free(struct bpf_map *map)
 {
 	struct bpf_struct_ops_map *st_map = (struct bpf_struct_ops_map *)map;
+
+	/* kvalue.data is valid until trampoline image is freed. Set
+	 * this_st_ops to NULL and wait a rcu gp to make sure readers don't
+	 * see a deconstructing struct_ops struct.
+	 */
+	if (st_map->st_ops_desc->st_ops->flags & BPF_STRUCT_OPS_F_THIS_PTR)
+		bpf_struct_ops_map_clear_this_ptr(st_map);
 
 	/* st_ops->owner was acquired during map_alloc to implicitly holds
 	 * the btf's refcnt. The acquire was only done when btf_is_module()
