@@ -125,6 +125,7 @@ TEST_GEN_PROGS_EXTENDED = \
 	flow_dissector_load \
 	runqslower \
 	test_cpp \
+	test_cpp_2 \
 	test_lirc_mode2_user \
 	veristat \
 	xdp_features \
@@ -792,6 +793,10 @@ CXXFLAGS := $(subst -std=gnu11,-std=gnu++11,$(CXXFLAGS))
 $(OUTPUT)/test_cpp: test_cpp.cpp $(OUTPUT)/test_core_extern.skel.h $(BPFOBJ)
 	$(call msg,CXX,,$@)
 	$(Q)$(CXX) $(CXXFLAGS) $(filter %.a %.o %.cpp,$^) $(LDLIBS) -o $@
+
+$(OUTPUT)/test_cpp_2: test_cpp_2.cpp $(OUTPUT)/test_core_extern.skel.h $(BPFOBJ)
+	$(call msg,CXX,,$@)
+	clang++ $(CXXFLAGS) -no-pie $(filter %.a %.o %.cpp,$^) $(LDLIBS) -o $@
 
 # Benchmark runner
 $(OUTPUT)/bench_%.o: benchs/bench_%.c bench.h $(BPFOBJ)
