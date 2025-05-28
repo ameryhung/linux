@@ -283,10 +283,73 @@ out:
 	test_task_local_data__destroy(skel);
 }
 
+static void test_task_local_data_get_data_try_fetch(void)
+{
+	LIBBPF_OPTS(bpf_test_run_opts, opts);
+	struct test_task_local_data *skel;
+	int fd, err, *value1;
+	struct test_struct *value2;
+
+	skel = test_task_local_data__open_and_load();
+	if (!ASSERT_OK_PTR(skel, "skel_open_and_load"))
+		return;
+
+	tld_keys = calloc(TEST_BASIC_THREAD_NUM, sizeof(tld_key_t));
+	if (!ASSERT_OK_PTR(tld_keys, "calloc tld_keys"))
+		goto out;
+
+	fd = bpf_map__fd(skel->maps.tld_data_map);
+
+	reset_tld();
+
+	err = bpf_prog_test_run_opts(bpf_program__fd(skel->progs.task_main), &opts);
+	ASSERT_OK(err, "run task_main");
+	ASSERT_EQ(opts.retval, 1, "task_main retval");
+
+	tld_keys[0] = tld_create_key("value1", sizeof(int));
+	ASSERT_FALSE(tld_key_is_err(tld_keys[0]), "tld_create_key");
+	tld_keys[1] = tld_create_key("value2", sizeof(struct test_struct));
+	ASSERT_FALSE(tld_key_is_err(tld_keys[1]), "tld_create_key");
+
+	value1 = tld_get_data(fd, tld_keys[0]);
+	if (!ASSERT_OK_PTR(value1, "tld_get_data"))
+		goto out;
+
+	value2 = tld_get_data(fd, tld_keys[1]);
+	if (!ASSERT_OK_PTR(value2, "tld_get_data"))
+		goto out;
+
+	*value1 = 10;
+	value2->a = 11;
+	value2->b = 12;
+	value2->c = 13;
+	value2->d = 14;
+
+	err = bpf_prog_test_run_opts(bpf_program__fd(skel->progs.task_main), &opts);
+	ASSERT_OK(err, "run task_main");
+	ASSERT_OK(opts.retval, "task_main retval");
+
+	ASSERT_EQ(skel->bss->test_value1, 10, "tld_get_data value1");
+	ASSERT_EQ(skel->bss->test_value2.a, 11, "tld_get_data value2.a");
+	ASSERT_EQ(skel->bss->test_value2.b, 12, "tld_get_data value2.b");
+	ASSERT_EQ(skel->bss->test_value2.c, 13, "tld_get_data value2.c");
+	ASSERT_EQ(skel->bss->test_value2.d, 14, "tld_get_data value2.d");
+
+out:
+	if (tld_keys) {
+		free(tld_keys);
+		tld_keys = NULL;
+	}
+	tld_free();
+	test_task_local_data__destroy(skel);
+}
+
 void test_task_local_data(void)
 {
 	if (test__start_subtest("task_local_data_basic"))
 		test_task_local_data_basic();
 	if (test__start_subtest("task_local_data_race"))
 		test_task_local_data_race();
+	if (test__start_subtest("task_local_data_get_data_try_fetch"))
+		test_task_local_data_get_data_try_fetch();
 }
